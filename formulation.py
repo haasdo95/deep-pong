@@ -230,15 +230,22 @@ class Game:
                 push(D, entry)
                 sampledEntries = getMiniBatch(D)
                 # build ground truth y_i
+                # TODO: vectorize
+                nonterm = []
+                for sampledEntry in sampledEntries:
+                    if sampledEntry.newState is not None:
+                        nonterm.append(torch.unsqueeze(sampledEntry.newState.tensorize(), dim=0))
+                nonterm = torch.cat(nonterm, dim=0)
+                nonterm = self.rightAgent.qnn.forward(Variable(nonterm)) # n * 3 vector
+                nonterm, _ = nonterm.max(1)
+                nonterm = iter(nonterm)
                 targets = np.zeros(BATCH_SIZE)
                 for idx, sampledEntry in enumerate(sampledEntries):
-                    if sampledEntry.newState is None: # terminal state
-                        targets[idx] = sampledEntry.reward # which will actually always be -1
+                    if sampledEntry.newState is None:
+                        targets[idx] = -1
                     else:
-                        indata = Variable(torch.unsqueeze(sampledEntry.newState.tensorize(), dim=0))
-                        out = self.rightAgent.qnn.forward(indata)
-                        maxValue, _ = out.max(1)
-                        targets[idx] = sampledEntry.reward + self.rightAgent.gamma * maxValue.data[0] # this is Q_Local
+                        targets[idx] = sampledEntry.reward + self.rightAgent.gamma * next(nonterm)
+
                 # compute Q-value guess
                 sampledOldStates = map(lambda ent: torch.unsqueeze(ent.oldState.tensorize(), dim=0), sampledEntries)
                 sampledOldStates = Variable(torch.cat(sampledOldStates, dim=0))
@@ -282,7 +289,7 @@ def train(gamma: float, learningRate: float, epsilon: float, epoch) -> List:
     return performance
 
 if __name__ == '__main__':
-    performance = train(gamma=0.9, learningRate=0.1, epsilon=0.05, epoch=1000)
+    performance = train(gamma=0.9, learningRate=0.1, epsilon=0.05, epoch=5000)
     print("Mean: ", np.mean(performance))
     print("Std Dev: ", np.std(performance))
     for pc in range(10):

@@ -8,8 +8,8 @@ from torch import optim
 from torch.autograd import Variable
 import numpy as np
 from queue import deque # D is basically a deque
-CAPACITY = 1024 # below this threshold, the deque keeps accepting; above this, old ones will be exiled
-BATCH_SIZE = 20
+CAPACITY = 1000000 # below this threshold, the deque keeps accepting; above this, old ones will be exiled
+BATCH_SIZE = 100
 
 from typing import List
 

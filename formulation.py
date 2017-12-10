@@ -1,18 +1,26 @@
 from enum import Enum
 import os
+import time
 import random
 from qnn import QNN
 import torch
 from torch import nn
 from torch import optim
+from torch.optim import lr_scheduler
 from torch.autograd import Variable
 import numpy as np
 from queue import deque # D is basically a deque
-CAPACITY = 1000000 # below this threshold, the deque keeps accepting; above this, old ones will be exiled
+CAPACITY = 50000 # below this threshold, the deque keeps accepting; above this, old ones will be exiled
 BATCH_SIZE = 100
 
+ENV_TESTING = False
 from typing import List
 
+# credit to: https://discuss.pytorch.org/t/solved-learning-rate-decay/6825
+# this is called every 100 epochs
+def adjust_learning_rate(optimizer):
+    for param_group in optimizer.param_groups:
+        param_group['lr'] = param_group['lr'] * 0.98
 
 class MoveType(Enum):
     STAY = 0
@@ -44,7 +52,7 @@ class Entry():
         self.newState = newState
 
 def push(D: deque, entry: Entry):
-    if len(D) == CAPACITY:
+    if len(D) >= CAPACITY:
         D.popleft() # exile an old observation
     D.append(entry)
 def getMiniBatch(D: deque) -> List[Entry]:
@@ -228,6 +236,8 @@ class Game:
             if isinstance(self.rightAgent, TrainedAgent):
                 entry = Entry(oldState, mright, reward, newState)
                 push(D, entry)
+                if ENV_TESTING:
+                    continue # keep filling in
                 sampledEntries = getMiniBatch(D)
                 # build ground truth y_i
                 # TODO: vectorize
@@ -257,7 +267,6 @@ class Game:
                 targets = Variable(torch.from_numpy(targets).float())
                 criterion = nn.MSELoss()
                 loss = criterion.forward(guesses, targets)
-                # TODO: perform gradient descent
                 self.rightAgent.qnn.zero_grad()
                 loss.backward() # can backward work here?
                 self.rightAgent.optimizer.step()
@@ -266,6 +275,7 @@ class Game:
         return outcome
 
 def train(gamma: float, learningRate: float, epsilon: float, epoch) -> List:
+    starttime = time.time()
     leftAgent = WallAgent(True)
     rightAgent = TrainedAgent(True, epsilon, gamma, learningRate)
     if os.path.exists("./memory.pkl"):
@@ -278,18 +288,21 @@ def train(gamma: float, learningRate: float, epsilon: float, epoch) -> List:
     D = deque()
     performance = []
     for epk in range(epoch):
-        if (epk + 1) % 10 == 0:
-            print("EPOCH: ", epk)
         game.play(D, performance)
         game.ball = Ball()
         game.rightAgent.paddleY = 0.4 # reset
+        if (epk + 1) % 100 == 0:
+            print("EPOCH: ", epk)
+            adjust_learning_rate(rightAgent.optimizer) # discount for 0.98 for every 100
+            rightAgent.epsilon = rightAgent.epsilon * 0.98 # decay epsilon as well
     print(list(rightAgent.qnn.parameters()))
     with open("./memory.pkl", "wb") as mem:
         torch.save(rightAgent.qnn.state_dict(), mem)
+    print("Took: ", time.time() - starttime)
     return performance
 
 if __name__ == '__main__':
-    performance = train(gamma=0.9, learningRate=0.1, epsilon=0.05, epoch=5000)
+    performance = train(gamma=0.9, learningRate=0.1, epsilon=0.05, epoch=1000)
     print("Mean: ", np.mean(performance))
     print("Std Dev: ", np.std(performance))
     for pc in range(10):
